@@ -1,0 +1,36 @@
+# The baseline campaign: Mockingjay as the starting program, under CRC-2's rules, so later
+# campaigns (levers) compare against it at equal generations and CPU-hours, and its finalists
+# can sit beside ArchAgent's (arXiv 2602.22425; it also starts from Mockingjay).
+# - Simulated system: configs/champsim/baseline.json, which matches ArchAgent's "default CRC-2
+#   single-core" table (no prefetch). Scored on crc2-evolve-v1 (14 traces, 20M + 50M), as the
+#   pilot; finalists are validated on crc2-validate-v1, then crc2-final-v1 (19 traces, 200M + 1B).
+# - Prompt champsim-crc2-v1: 410cee6's exact hook semantics, bypass, a 48 KB state budget (ArchAgent's;
+#   CRC-2's rule is 32 KB, and the seed uses 31.9 KB) and CRC-2's interface rules.
+# - Model qwen3.6-27b-fp8-v2: a context sized for Mockingjay-sized programs.
+# - Ends after `generations` (the stop that makes runs comparable); max_wall_hours and
+#   max_cpu_hours are safety stops only.
+#     make oe-check SPEC=crc2-evolve-mj1
+#     make campaign-estimate SPEC=crc2-evolve-mj1
+#     make campaign-start SPEC=crc2-evolve-mj1 NAME=crc2-evolve-mj1      (on g17, with AFAR_MAIL_USER set)
+spec_version: 1
+description: Baseline campaign, Mockingjay seed under CRC-2 rules, 25 generations x 42 candidates
+seed: seeds/mockingjay.h
+model: qwen3.6-27b-fp8-v2
+prompt: champsim-crc2-v1
+search: champsim-rewrite-v1
+evaluator:
+  policy: champsim_ipc
+  experiment: crc2-evolve-v1
+  cpus_per_candidate: 8             # longest trace first; the wall time is still mcf_46B's
+  duplicate_screen:                 # docs/levers/evaluation/duplicate-screen.md; audited
+    trace: [bzip2_183B, soplex_66B]
+    audit_every: 10
+campaign:
+  generations: 25                   # the stop
+  candidates_per_generation: 42     # 14 per island with the search profile's 3 islands
+  max_concurrent_tasks: 42          # 42 x 8 = 336 CPUs, the pilot's footprint
+  max_task_retries: 2
+  max_stage_retries: 2
+  max_wall_hours: 168               # a safety stop only
+  generate_minutes: 120             # the 27B on an A100 with Mockingjay-length prompts can take about an hour
+  max_cpu_hours: 7500               # a safety stop only: about 1.25 x the estimate (5,976 for 25 generations, which errs high)

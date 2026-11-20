@@ -196,6 +196,7 @@ All are optional keys in the spec's `campaign:` section.
 | `min_free_gb` | 200 | `halted: storage`, when the campaign's filesystem has less free |
 | `max_stage_retries` | 2 | `halted: stage_failed` or `stalled` (section 5) |
 | `heartbeat_minutes` | 60 | at least 60, or 10 with `test: true` |
+| `generate_minutes` | 30 | the generation job's Slurm time limit: model start-up (up to 15 min) plus one batch. Raise it for a larger model or longer prompts; `crc2-evolve-mj1` uses 120 for the 27B with Mockingjay-length prompts (added 2026-11-19) |
 | `test` | false | allows test-only settings |
 
 Aggregation checks the limits after each generation, so one can be overshot by up to one generation. The wall time is checked again when a generation job starts: a job that waited in the queue past `max_wall_hours` ends the campaign as `finished (wall_time)` without starting the model (`docs/status.md` issue 15). So the wall time can be overshot by a queue wait, but not by another generation. CPU- and GPU-hours come from `sacct` over every job in `events.jsonl`, array tasks included; heartbeats aren't counted. A budget halt can't be resumed, because the limits are part of the spec: to go further, start a new campaign from its last checkpoint.
@@ -285,6 +286,7 @@ A checkpoint can hold fewer programs than were added. When a program takes over 
   - the CPU-hours the evaluation tasks held (CPUs × each task's evaluation time) and spent simulating (the trace records' `run_seconds`)
   - their ratio: the efficiency that `seff` and Princeton's jobstats report, which flags jobs below 65–80%
   - CPU-hours per evaluation, and each trace's run times
+- **Performance against compute** (added 2026-11-19): per generation, the best fitness found and the best so far, beside the cumulative CPU-hours held and simulating. Campaigns compared at equal generations or CPU-hours read off this table. On the pilot, the best so far rose at generations 1, 2 and 6, and reached 1.044477 at 897.5 CPU-hours held.
 - **Cached evaluations** (a candidate scored before) cost nothing and are counted apart.
 - **`SACCT=1`, on g17,** adds Slurm's own `TotalCPU` and peak memory for the evaluation tasks. Cores may be shared, since every partition has `OverSubscribe=FORCE:4`, and Slurm's CPU time would show it.
 
@@ -363,6 +365,7 @@ A checkpoint can hold fewer programs than were added. When a program takes over 
   - replies whose changed code behaved exactly like their parent
   - behaviors so far
   - behaviors in the population OpenEvolve kept (the generation's checkpoint)
+- **Per reply, per generation** (added 2026-11-19): each reply is rejected (no code, a copy of its parent, too long, or an LLM error), failed (by status: `compile_failed`, `invalid_candidate`, `runtime_failed`, `timeout`) or valid (scored). A valid reply is novel if it doesn't behave exactly like its parent (a reply whose parent has no complete behavior counts as novel), and improving if its fitness is at least 1.001 × its parent's. On the pilot's 240 replies: 28 rejected, all copies (12%); 37 failed (15%); 175 valid, of which 96 novel (40% of replies) and 39 improving (16%), the same as the counts made by hand on 2026-11-14.
 - **Also reported:**
   - behaviors per island
   - good behaviors: above LRU and within 1% of the best

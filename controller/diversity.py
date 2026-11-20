@@ -65,6 +65,7 @@ MAX_SUBSETS = 2000        # trace subsets of one size; sampled (fixed seed) beyo
 MAX_CODE_PAIRS = 20000    # candidate pairs for the code comparison; sampled (fixed seed) beyond this
 TOP_GROUPS = 8
 COPY = "identical to the parent program"
+IMPROVING = 1.001     # a reply improves on its parent by at least 0.1% (the pilot's measure)
 
 
 # --- fingerprints --------------------------------------------------------------
@@ -285,15 +286,35 @@ def diversity(c, thresholds=DEFAULT_THRESHOLDS):
         mine = [k for k in dict.fromkeys(e.get("candidate_id") for e in entries[g]) if k in scored]
         before = set(seen)
         like_parent = parent_known = 0
+        # Each reply's properties (docs/campaigns.md, section 9): valid (built, ran and scored),
+        # novel (valid, and not the parent's behavior), improving (valid, and at least
+        # IMPROVING x the parent's fitness).
+        failed_by = {}
+        valid = novel = improving = 0
         for e in entries[g]:
             cand, parent = e.get("candidate_id"), fp(prog.get(e.get("parent_id")))
             if cand in scored and parent:
                 parent_known += 1
                 like_parent += fp(cand)["cycles"] == parent["cycles"]
+            if not cand:
+                continue
+            r = cp.read_json(c.gen_dir(g) / "results" / f"{cand}.json", {}) or {}
+            if r.get("status") != "completed":
+                status = r.get("status") or "no result"
+                failed_by[status] = failed_by.get(status, 0) + 1
+                continue
+            valid += 1
+            novel += not (cand in scored and parent and fp(cand)["cycles"] == parent["cycles"])
+            parent_fitness = (e.get("parent_metrics") or {}).get("combined_score")
+            if r.get("fitness") is not None and parent_fitness:
+                improving += r["fitness"] >= IMPROVING * parent_fitness
         new = {behavior_of[k] for k in mine} - before
         seen |= {behavior_of[k] for k in mine}
         row = {"generation": g, "replies": len(entries[g]),
                "copies": sum(e.get("rejected") == COPY for e in entries[g]),
+               "rejected": sum("rejected" in e for e in entries[g]),
+               "failed": sum(failed_by.values()), "failed_by": failed_by,
+               "valid": valid, "novel": novel, "improving": improving,
                "scored": len(mine), "new_behaviors": len(new),
                "repeats": sum(behavior_of[k] in before for k in mine),
                "like_parent": like_parent, "parent_known": parent_known, "behaviors_so_far": len(seen)}
@@ -512,6 +533,12 @@ def print_diversity(r):
                if "population" in row else "-")
         print(f"  {row['generation']:>3}  {row['replies']:>7}  {row['copies']:>6}  {row['scored']:>6}  {row['new_behaviors']:>3}"
               f"  {row['repeats']:>7}  {row['like_parent']:>5} of {row['parent_known']:<3}  {row['behaviors_so_far']:>6}  {pop}")
+    print(f"  per reply: valid (scored), novel (valid, not the parent's behavior), improving (valid, >= {IMPROVING} x the parent)")
+    print("  gen  replies  rejected  failed  valid  novel  improving  failures")
+    for row in r["generations"]:
+        why = ", ".join(f"{k} {v}" for k, v in sorted(row["failed_by"].items())) or "-"
+        print(f"  {row['generation']:>3}  {row['replies']:>7}  {row['rejected']:>8}  {row['failed']:>6}  {row['valid']:>5}"
+              f"  {row['novel']:>5}  {row['improving']:>9}  {why}")
     print("  island  replies  scored  behaviors  only here")
     for i in r["islands"]:
         print(f"  {str(i['island']):>6}  {i['replies']:>7}  {i['scored']:>6}  {i['behaviors']:>9}  {i['only_here']:>9}")

@@ -69,6 +69,7 @@ EXECUTORS = ("slurm", "local")
 LOCAL_EXECUTORS = {}             # campaign directory -> its LocalExecutor, shared by every stage in this process
 # Any GPU vLLM can use: an A100 or an H100 (job 98572), whichever frees first; the pilot's generation 5
 # waited 35.4 h for an A100 alone (docs/status.md, issue 14). gpuqs's P100s are always excluded.
+# time: the spec's campaign.generate_minutes (default 30) replaces it when a job is submitted.
 GENERATE_RESOURCES = {"partition": "gpuqs", "gres": "gpu:1", "cpus-per-task": 4, "mem": "24G", "time": "00:30:00"}
 NO_VLLM_NODES = ("g[1-15]",)     # gpuqs's P100 nodes: compute capability 6.0, below the 8.0 bf16 needs
 AGGREGATE_RESOURCES = {"partition": "cpuqs", "cpus-per-task": 1, "mem": "4G", "time": "00:20:00"}
@@ -179,8 +180,8 @@ class Campaign:
                 "time": hms(limit + EVALUATE_MARGIN_S)}
 
     def submit(self, stage, g, **kwargs):
-        resources = {"generate": GENERATE_RESOURCES, "aggregate": AGGREGATE_RESOURCES,
-                     "handle": HANDLE_RESOURCES}.get(stage) or self.evaluate_resources()
+        resources = {"generate": dict(GENERATE_RESOURCES, time=hms(60 * self.param("generate_minutes"))),
+                     "aggregate": AGGREGATE_RESOURCES, "handle": HANDLE_RESOURCES}.get(stage) or self.evaluate_resources()
         exclude = set(kwargs.pop("exclude", ()))
         if stage == "generate":
             exclude |= set(self.meta.get("exclude", [])) | set(NO_VLLM_NODES)
@@ -346,7 +347,9 @@ def generate(c, g, api_base=None, needs_llm=False, job=None):
                      "token_usage": reply["token_usage"], "llm_seconds": reply["seconds"]}
             code = oe.parse_rewrite(reply["response"], config.language)
             reason = reply["error"] or (None if code else "no code found in the reply")
-            if not reason and code == parent.code:
+            # Compared stripped: the parser strips a reply, while a seed is stored as read, with its
+            # final newline, so a copy of the seed used to pass (docs/status.md issue 18).
+            if not reason and code.strip() == parent.code.strip():
                 reason = "identical to the parent program"
             if not reason and len(code) > config.max_code_length:
                 reason = f"longer than max_code_length ({len(code)} > {config.max_code_length})"
@@ -1031,6 +1034,9 @@ def selftest(keep=False):
         cands = [e["candidate_id"] for e in gen1 if "candidate_id" in e]
         check("(f) duplicates are evaluated once", len(uniq) == len(set(cands)) < len(cands),
               f"{len(cands)} candidates, {len(uniq)} evaluations")
+        copies = [e for e in gen1 if seed.strip() in (e.get("response") or "")]
+        check("(issue 18) a copy of the seed is rejected as identical to its parent, despite its final newline",
+              copies and all(e.get("rejected") == "identical to the parent program" for e in copies), f"{len(copies)} copies")
         s = read_json(c.gen_dir(3) / "summary.json")
         check("statuses vary across candidates", len(s["statuses"]) >= 2, str(s["statuses"]))
 
@@ -1054,6 +1060,11 @@ def selftest(keep=False):
               [r["generation"] for r in rep["generations"]] == [0, 1, 2, 3] and rep["evaluations"] + rep["cached"] == files
               and len(rep["traces"]) == len(manifest["traces"]),
               f"{rep['evaluations']} evaluated, {rep['cached']} cached, {len(rep['traces'])} traces")
+        bsf = [r["best_so_far"] for r in rep["generations"]]
+        cum = [r["cpu_hours_held_cum"] for r in rep["generations"]]
+        check("(metrics) campaign-report: the best so far against cumulative CPU-hours",
+              None not in bsf and bsf == sorted(bsf) and bsf[-1] == max(r["best"] or 0 for r in rep["generations"])
+              and cum == sorted(cum) and cum[-1] == rep["cpu_hours_held"], f"best {bsf}, CPU-hours {cum}")
         est = report.estimate(spec_path)
         warned = report.estimate(variant("over-budget", max_wall_hours=1000, max_cpu_hours=1e-9))
         check("(efficiency) campaign-estimate, and its budget warning", est["generations"] == 3
@@ -1076,6 +1087,12 @@ def selftest(keep=False):
               0 < d["behaviors"] <= d["candidates"] and [r["generation"] for r in div["generations"]] == [0, 1, 2, 3]
               and div["cross_check"]["agree"] and div["separation"] is not None,
               f"{d['candidates']} candidates, {d['behaviors']} behaviors, {div['cross_check']['candidates']} with miss data")
+        rows = div["generations"]
+        check("(metrics) campaign-diversity: each reply is rejected, failed or valid; novel and improving are valid",
+              all(r["rejected"] + r["failed"] + r["valid"] == r["replies"] and r["improving"] <= r["valid"]
+                  and r["novel"] <= r["valid"] for r in rows) and sum(r["failed"] for r in rows) > 0
+              and sum(r["valid"] for r in rows) > 0,
+              ", ".join(f"g{r['generation']} {r['rejected']}/{r['failed']}/{r['valid']}/{r['novel']}/{r['improving']}" for r in rows))
 
         # (screen) the duplicate screen replayed (diversity.screen_rows): a candidate matches only behaviors that
         # earlier generations completed; a screening result two behaviors share is ambiguous and never screened;
@@ -1317,7 +1334,8 @@ def selftest(keep=False):
         cz.submit_generation(1)
         gen = next((s for s in (fake / "sbatch.log").read_text().splitlines() if "campaign_generate.sbatch" in s), "")
         check("(issue 14) the generation job's Slurm flags", all(x in gen for x in (
-            "--partition=gpuqs", "--gres=gpu:1", "--exclude=g[1-15]", "--hold")) and "a100" not in gen, gen[-90:])
+            "--partition=gpuqs", "--gres=gpu:1", "--exclude=g[1-15]", "--hold", "--time=00:30:00")) and "a100" not in gen,
+              gen[-90:])
         # (issue 14) why a queued job waits, from squeue; nothing for a running job.
         submitted = datetime.datetime.now() - datetime.timedelta(hours=2)
         os.environ["FAKE_SQUEUE_OUT"] = f"PENDING|Priority|{submitted.isoformat(timespec='seconds')}"

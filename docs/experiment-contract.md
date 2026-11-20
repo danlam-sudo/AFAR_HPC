@@ -18,7 +18,7 @@ Scope: evolve the **LLC replacement policy** of ChampSim at the pinned commit. E
   - The module's class name must equal its directory name.
 - How it is built: the evaluator places the file at `<workspace>/repl/evolved_repl/evolved_repl.h` and runs `config.sh --replacement-dir <workspace>/repl` with `LLC.replacement = "evolved_repl"`. This is ChampSim's standard out-of-tree module mechanism, with no source edits.
 - A candidate's identity is the sha256 of its file. Candidate files are immutable once written.
-- The seed is an exact port of stock `lru`, so its fitness must be exactly 1.0.
+- The default seed, `seeds/evolved_repl.h`, is an exact port of stock `lru`, so its fitness must be exactly 1.0. A run spec may name another seed (`seed:`) if it keeps this seed frame, the text outside the EVOLVE-BLOCK, since static checks compare candidates with `seeds/evolved_repl.h`'s frame. `seeds/mockingjay.h` (Mockingjay, the baseline campaign's seed since 2026-11-19) does.
 - Static checks reject a candidate as `invalid_candidate` when:
   - it exceeds the size limit
   - an EVOLVE-BLOCK marker is missing, or there is more than one block

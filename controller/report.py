@@ -94,6 +94,7 @@ def campaign_report(c):
     rows, per_trace = [], {}
     held = simulated = gpu_s = 0.0
     fresh_n = cached_n = screened_n = 0
+    best_so_far = None
     for g in sorted(int(p.name) for p in (c.path / "generations").glob("*") if p.name.isdigit()):
         row = {"generation": g}
         gen = generated.get(g)
@@ -108,10 +109,13 @@ def campaign_report(c):
                     row["gpu_wait_min"] = minutes(T(sub["at"]), start)
         first = next((T(e["at"]) for e in submitted if e["stage"] == "evaluate" and e["generation"] == g), None)
         ends, cached, screened = [], 0, 0
+        gen_best = None
         for f in sorted((c.gen_dir(g) / "results").glob("*.json")):
             if ".infra-" in f.name:
                 continue
             r = cp.read_json(f)
+            if r["status"] == "completed" and r.get("fitness") is not None:
+                gen_best = r["fitness"] if gen_best is None else max(gen_best, r["fitness"])
             s = r["summary"]
             start, end = T(s["started_at"]), T(s["finished_at"])
             if s.get("cached") or (first and start < first):
@@ -134,6 +138,12 @@ def campaign_report(c):
         cached_n += cached
         screened_n += screened
         row.update(evaluated=len(ends), cached=cached, screened=screened)
+        # Performance against compute: the best fitness found by the end of this generation, and the
+        # CPU-hours spent by then (cached evaluations are free; screened ones count what they ran).
+        if gen_best is not None:
+            best_so_far = gen_best if best_so_far is None else max(best_so_far, gen_best)
+        row.update(best=gen_best, best_so_far=best_so_far, cpu_hours_held_cum=round(held / 3600, 1),
+                   cpu_hours_simulating_cum=round(simulated / 3600, 1))
         if ends and first:
             ends.sort()
             row.update(half_min=minutes(first, at_fraction(ends, 0.5)), three_quarters_min=minutes(first, at_fraction(ends, 0.75)),
@@ -223,6 +233,12 @@ def print_campaign(rep, sacct=None):
     if sacct:
         print(f"  sacct, evaluation tasks: {sacct['tasks']} tasks; CPU efficiency (TotalCPU / held) "
               f"{sacct['efficiency']:.0%}; peak memory {sacct['max_rss_gb']} GB of {sacct['mem_request_gb']} GB requested")
+    print("  performance against compute (CPU-hours by the end of each generation):")
+    print("  gen      best  best so far  CPU-h held  CPU-h simulating")
+    for r in rep["generations"]:
+        b = f"{r['best']:.6f}" if r.get("best") is not None else "-"
+        bsf = f"{r['best_so_far']:.6f}" if r.get("best_so_far") is not None else "-"
+        print(f"  {r['generation']:>3}  {b:>8}  {bsf:>11}  {r['cpu_hours_held_cum']:>10,}  {r['cpu_hours_simulating_cum']:>16,}")
     if rep["traces"]:
         print("  trace run times, completed candidates (s):   median     min     max   share")
         for t in rep["traces"]:

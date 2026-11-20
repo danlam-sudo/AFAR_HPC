@@ -65,9 +65,12 @@ CAMPAIGN_OPTIONAL = {"max_concurrent_tasks": int, "max_task_retries": int,
                      # M6: stop conditions, a budget and the watchdog (docs/campaigns.md)
                      "max_wall_hours": NUMBER, "target_fitness": NUMBER, "max_cpu_hours": NUMBER,
                      "max_gpu_hours": NUMBER, "max_failed_generations": int, "min_free_gb": NUMBER,
-                     "max_stage_retries": int, "heartbeat_minutes": int, "test": bool}
+                     "max_stage_retries": int, "heartbeat_minutes": int, "test": bool,
+                     # the generation job's Slurm time limit: model start-up (up to 15 min) plus one batch
+                     "generate_minutes": int}
 CAMPAIGN_DEFAULTS = {"max_concurrent_tasks": 40, "max_task_retries": 2, "max_failed_generations": 3,
-                     "min_free_gb": 200, "max_stage_retries": 2, "heartbeat_minutes": 60, "test": False}
+                     "min_free_gb": 200, "max_stage_retries": 2, "heartbeat_minutes": 60, "test": False,
+                     "generate_minutes": 30}
 # A campaign's heartbeat polls the scheduler, so it runs at most hourly; only a test campaign may go faster.
 HEARTBEAT_FLOOR_MINUTES = {False: 60, True: 10}
 NODE_CPUS = 56                         # HPC3's CPU nodes (docs/sjsu-hpc-workflow.md); a candidate's task fits one

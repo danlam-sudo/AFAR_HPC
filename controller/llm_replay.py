@@ -260,7 +260,7 @@ def assess(response, error, parent, max_length, language):
     code = oe.parse_rewrite(response, language) if row["answered"] else None
     row["code_found"] = bool(code)
     if code:
-        row.update(sha=hashlib.sha256(code.encode()).hexdigest(), bytes=len(code), identical=code == parent,
+        row.update(sha=hashlib.sha256(code.encode()).hexdigest(), bytes=len(code), identical=code.strip() == parent.strip(),
                    cosmetic=normalized(code) == normalized(parent), too_long=len(code) > max_length,
                    changed_lines=changed_lines(code, parent), parent_block_lines=len(evolve_block(parent)))
         row["_code"] = code
